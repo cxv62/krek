@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kraken Lyrics - Spotify PKCE</title>
+  <style>
+    body {
+      margin:0;
+      background:#000;
+      color:#fff;
+      font-family:Verdana,Arial;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      height:100vh;
+      overflow:hidden;
+      text-align:center;
+    }
+    #cover {
+      width: 100%;
+      max-width: 240px;
+      aspect-ratio: 1/1;
+      object-fit: cover;
+      border-radius: 10px;
+      margin-top: 8px;
+    }
+    #lyricsBox {
+      flex: 1;
+      width: 90%;
+      overflow: hidden;
+      position: relative;
+      margin-top: 6px;
+    }
+    #lyrics {
+      position: absolute;
+      top: 100%;
+      width: 100%;
+      line-height: 1.3em;
+      white-space: pre-wrap;
+    }
+    button {
+      margin-top: 16px;
+      padding: 10px 20px;
+      font-size: 16px;
+      border: none;
+      background: #1DB954;
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <img id="cover" src="" alt="Album cover" />
+  <div id="lyricsBox"><div id="lyrics">جاري تحميل الكلمات...</div></div>
+  <button id="loginBtn">تسجيل الدخول إلى Spotify</button>
+
+  <script>
+    const clientId = 'c29a0ebbef824fada858c8d774de217b';
+    const redirectUri = 'https://cxv62.github.io/krek/';
+    const scopes = 'user-read-playback-state';
+
+    const cover = document.getElementById('cover');
+    const lyricsDiv = document.getElementById('lyrics');
+    const loginBtn = document.getElementById('loginBtn');
+
+    async function generateCodeChallenge(codeVerifier) {
+      const data = new TextEncoder().encode(codeVerifier);
+      const digest = await crypto.subtle.digest('SHA-256', data);
+      return btoa(String.fromCharCode(...new Uint8Array(digest)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+    }
+
+    function generateRandomString(length) {
+      let text = '';
+      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      for (let i = 0; i < length; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+      }
+      return text;
+    }
+
+    async function redirectToSpotifyAuth() {
+      const codeVerifier = generateRandomString(128);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      localStorage.setItem('code_verifier', codeVerifier);
+
+      const args = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        scope: scopes,
+        redirect_uri: redirectUri,
+        code_challenge_method: 'S256',
+        code_challenge: codeChallenge
+      });
+
+      window.location = 'https://accounts.spotify.com/authorize?' + args;
+    }
+
+    async function fetchAccessToken(code) {
+      const codeVerifier = localStorage.getItem('code_verifier');
+      const body = new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        code_verifier: codeVerifier
+      });
+
+      const response = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+      });
+      return await response.json();
+    }
+
+    async function fetchPlaybackState(token) {
+      const res = await fetch('https://api.spotify.com/v1/me/player', {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      return await res.json();
+    }
+
+    function scrollLyrics(duration) {
+      const totalHeight = lyricsDiv.scrollHeight + 40;
+      lyricsDiv.animate(
+        [{ top: '100%' }, { top: `-${totalHeight}px` }],
+        {
+          duration,
+          easing: 'linear',
+          fill: 'forwards'
+        }
+      );
+    }
+
+    async function displayLyrics(token) {
+      const data = await fetchPlaybackState(token);
+      if (!data || !data.item) {
+        lyricsDiv.innerText = 'لا توجد أغنية مشغلة حالياً.';
+        cover.src = '';
+        return;
+      }
+      const { name, artists, album, duration_ms } = data.item;
+      cover.src = album.images[0].url;
+      const lyrics = `أغنية: ${name}\nالفنان: ${artists.map(a => a.name).join(', ')}`; // Placeholder
+      lyricsDiv.style.top = '100%';
+      lyricsDiv.innerText = lyrics;
+      setTimeout(() => scrollLyrics(duration_ms), 800);
+    }
+
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+
+      if (code) {
+        loginBtn.style.display = 'none';
+        const tokenData = await fetchAccessToken(code);
+        const accessToken = tokenData.access_token;
+        localStorage.setItem('spotify_token', accessToken);
+        history.replaceState({}, document.title, redirectUri);
+        displayLyrics(accessToken);
+        setInterval(() => displayLyrics(accessToken), 5000);
+      } else {
+        loginBtn.onclick = redirectToSpotifyAuth;
+      }
+    })();
+  </script>
+</body>
+</html>
